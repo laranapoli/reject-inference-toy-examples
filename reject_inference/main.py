@@ -6,11 +6,13 @@ class RejectInference:
                  data: pd.DataFrame,
                  target_column_future_name: str,
                  bad_rate_column: str = None,
-                 bad_prob_column: str = None):
+                 bad_prob_column: str = None,
+                 application_vars: list = None):
         self.data = data
         self.bad_rate_column = bad_rate_column
         self.target_column_future_name = target_column_future_name
         self.bad_prob_column = bad_prob_column
+        self.application_vars = application_vars
 
         self._aux_parceling()
         self._aux_monte_carlo_parceling()
@@ -82,6 +84,41 @@ class RejectInference:
         inferidos[self.target_column_future_name] = np.where(inferidos['infer'] > inferidos[self.bad_rate_column], 1, 0)
 
         return inferidos
+    
+
+    def simple_augmentation(self,
+                            expected_bad_rate: float):
+        
+        inferidos = self.data.copy()
+
+        cutoff_threshold = np.percentile(self.data[self.bad_prob_column], 100 * (1 - expected_bad_rate))
+
+        inferidos[self.target_column_future_name] = np.where(inferidos[self.bad_prob_column] > cutoff_threshold, 1, 0)
+
+        return inferidos
 
         
+    def fuzzy_augmentation(self,
+                           approval_prob = 1.0):
+        
+        inferidos = pd.melt(self.data,
+                            id_vars=self.application_vars,
+                            var_name='prob_type',
+                            value_name='weight')
+        
+        inferidos[self.target_column_future_name] = np.where(inferidos['prob_type'] == self.bad_prob_column,
+                                                            1, 0)
+        
+        inferidos.drop(columns='prob_type', inplace=True)
 
+        if isinstance(approval_prob, float):
+            inferidos['weight'] = inferidos['weight'] * approval_prob
+        
+        elif isinstance(approval_prob, np.ndarray):
+            p_approve = np.tile(approval_prob, 2)
+            inferidos['weight'] = inferidos['weight'] * p_approve
+        else:
+            inferidos = None
+            print("Tipo de parâmetro não suportado")
+        
+        return inferidos
