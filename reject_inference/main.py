@@ -99,26 +99,44 @@ class RejectInference:
 
         
     def fuzzy_augmentation(self,
-                           approval_prob = 1.0):
-        
-        inferidos = pd.melt(self.data,
-                            id_vars=self.application_vars,
-                            var_name='prob_type',
-                            value_name='weight')
-        
-        inferidos[self.target_column_future_name] = np.where(inferidos['prob_type'] == self.bad_prob_column,
-                                                            1, 0)
-        
-        inferidos.drop(columns='prob_type', inplace=True)
+                           approval_prob = 1.0,
+                           fator_lambda: float = 1.0):
+        # Verificação de formato do dataset fornecido
+        unknown_cols = [coluna for coluna in self.data.columns if coluna not in self.application_vars]
+        float_cols = [coluna for coluna in unknown_cols if self.data[coluna].dtype == 'float64']
 
-        if isinstance(approval_prob, float):
-            inferidos['weight'] = inferidos['weight'] * approval_prob
-        
-        elif isinstance(approval_prob, np.ndarray):
-            p_approve = np.tile(approval_prob, 2)
-            inferidos['weight'] = inferidos['weight'] * p_approve
+        if (
+            set(self.application_vars).issubset(self.data.columns) and
+            len(self.data.columns == len(self.application_vars) + 2) and
+            len(float_cols) == len(unknown_cols)
+        ):
+            print("Sucesso: Dataset com formato esperado: Variáveis do KGB Model + Probas 1/0")
+
+            # Transforma cada rejeitado em 2 registros (bom/mau parcial) 
+            # ponderado pela probabilidade de ser bom/mau provenientes do KGB model
+            inferidos = pd.melt(self.data,
+                                id_vars=self.application_vars,
+                                var_name='prob_type',
+                                value_name='weight')
+            
+            inferidos[self.target_column_future_name] = np.where(inferidos['prob_type'] == self.bad_prob_column,
+                                                                1, 0)
+            
+            inferidos.drop(columns='prob_type', inplace=True)
+
+            inferidos.loc[inferidos[self.target_column_future_name] == 1, 'weight'] *= fator_lambda
+
+            if isinstance(approval_prob, float):
+                inferidos['weight'] = inferidos['weight'] * approval_prob
+            
+            elif isinstance(approval_prob, np.ndarray):
+                p_approve = np.tile(approval_prob, 2)
+                inferidos['weight'] = inferidos['weight'] * p_approve
+            else:
+                inferidos = None
+                print("Tipo de parâmetro não suportado")
         else:
-            inferidos = None
-            print("Tipo de parâmetro não suportado")
-        
+            print("Falha: O dataset não corresponde ao formato esperado: Variáveis do KGB Model + Probas 1/0")
+            inferidos = None   
+            
         return inferidos
