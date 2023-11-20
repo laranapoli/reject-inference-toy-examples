@@ -4,24 +4,56 @@ import numpy as np
 class RejectInference:
     def __init__(self, 
                  data: pd.DataFrame,
-                 target_column_future_name: str,
+                 target_column_future_name: str = None,
                  bad_rate_column: str = None,
-                 bad_prob_column: str = None,
+                 prob_column: str = None,
                  application_vars: list = None):
         self.data = data
         self.bad_rate_column = bad_rate_column
         self.target_column_future_name = target_column_future_name
-        self.bad_prob_column = bad_prob_column
+        self.prob_column = prob_column
         self.application_vars = application_vars
 
         self._aux_parceling()
         self._aux_monte_carlo_parceling()
 
+    def augmentation(self,
+                     flag_aprovado_column: str):
+
+        df_AR = self.data.copy()
+
+        # Define as classes de risco (decis) que serão usadas para o cálculo dos pesos
+        bins = pd.qcut(df_AR[self.prob_column], q=10, retbins=True, labels=False)[1]
+        labels = [i for i in range(1, (len(bins)))]
+        df_AR['classes_risco_AR'] = pd.cut(df_AR[self.prob_column], bins=bins, labels=labels)
+
+        classes_df = pd.crosstab(index=df_AR['classes_risco_AR'],
+                                columns=df_AR['aprovacao']).reset_index().rename(columns={
+                                    1: 'Aprovados', 
+                                    0: 'Recusados'
+                                })
+
+        # Calcula o peso para cada decil (classe de risco)
+        classes_df['weight'] = (classes_df['Aprovados']+classes_df['Recusados'])\
+            /classes_df['Aprovados']
+
+        # Cria o dataset de aprovados "aumentados" com seus respectivos pesos
+        tmp = df_AR.loc[df_AR[flag_aprovado_column] == 1].drop(
+            columns=flag_aprovado_column
+        ).copy()
+
+        augmented_df = tmp.merge(
+            classes_df[['classes_risco_AR', 'weight']],
+            how='left', on='classes_risco_AR'
+        ).drop(columns='classes_risco_AR')
+
+        return augmented_df
+
     
     def _aux_parceling(self,
                        row = None, 
                        fator_lambda: float = 1.0):
-        # Pega a probabilidade da faixa de risco que o rejeitado foi 
+        # Pega a bad rate da faixa de risco que o rejeitado foi 
         # alocado pelo modelo dos aprovados
         if row is not None:
             prob_scorecardA = fator_lambda * row[self.bad_rate_column]
@@ -54,10 +86,9 @@ class RejectInference:
                                    row = None,
                                    fator_lambda: float = 1.0,
                                    num_simulacoes: int = 1):
-        # Usa a probabilidade de ser mau do modelo dos aprovados
-        # (não da faixa de risco)
+        # Baseado no escore do modelo KGB:
         if row is not None:
-            prob_scorecardA = fator_lambda * row[self.bad_prob_column]
+            prob_scorecardA = fator_lambda * row[self.prob_column]
 
             performances_simuladas = []
 
@@ -78,10 +109,13 @@ class RejectInference:
                               fator_lambda: float = 1.0,
                               num_simulacoes: int = 1):
         
-        inferidos = self.data.apply(self._aux_monte_carlo_parceling, args=(fator_lambda, num_simulacoes,), axis=1)
+        inferidos = self.data.apply(self._aux_monte_carlo_parceling,
+                                    args=(fator_lambda, num_simulacoes,), axis=1)
 
-        # Define o default inferido baseado na bad rate da faixa de risco mapeada pelo modelo A
-        inferidos[self.target_column_future_name] = np.where(inferidos['infer'] > inferidos[self.bad_rate_column], 1, 0)
+        # Define o default inferido baseado na bad rate da faixa de risco 
+        # mapeada pelo modelo KGB
+        inferidos[self.target_column_future_name] = np.where(inferidos['infer'] \
+            > inferidos[self.bad_rate_column], 1, 0)
 
         return inferidos
     
@@ -91,9 +125,9 @@ class RejectInference:
         
         inferidos = self.data.copy()
 
-        cutoff_threshold = np.percentile(self.data[self.bad_prob_column], 100 * (1 - expected_bad_rate))
+        cutoff_threshold = np.percentile(self.data[self.prob_column], 100 * (1 - expected_bad_rate))
 
-        inferidos[self.target_column_future_name] = np.where(inferidos[self.bad_prob_column] > cutoff_threshold, 1, 0)
+        inferidos[self.target_column_future_name] = np.where(inferidos[self.prob_column] > cutoff_threshold, 1, 0)
 
         return inferidos
 
@@ -119,7 +153,7 @@ class RejectInference:
                                 var_name='prob_type',
                                 value_name='weight')
             
-            inferidos[self.target_column_future_name] = np.where(inferidos['prob_type'] == self.bad_prob_column,
+            inferidos[self.target_column_future_name] = np.where(inferidos['prob_type'] == self.prob_column,
                                                                 1, 0)
             
             inferidos.drop(columns='prob_type', inplace=True)
@@ -138,5 +172,5 @@ class RejectInference:
         else:
             print("Falha: O dataset não corresponde ao formato esperado: Variáveis do KGB Model + Probas 1/0")
             inferidos = None   
-            
+
         return inferidos

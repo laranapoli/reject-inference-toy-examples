@@ -6,7 +6,7 @@ class CreditMetrics:
     def __init__(self, 
                  data: pd.DataFrame, 
                  target_column: str,
-                 inference_reference_column: str):
+                 inference_reference_column: str = None):
         self.data = data
         self.target_column = target_column
         self.inference_reference_column = inference_reference_column
@@ -35,14 +35,17 @@ class CreditMetrics:
         # Calcula bad rate total (inferidos + KGB)
         overall_bad_rate = 100 * self.data[self.target_column].mean()
 
-        # Calcula a relação KGB odds / Inf. GB odds
-        kgb_goods = self.data.loc[self.data[self.inference_reference_column] == 'kgb'][self.target_column].value_counts().get(0, 0)
-        kbg_bads = self.data.loc[self.data[self.inference_reference_column] == 'kgb'][self.target_column].value_counts().get(1, 0)
+        if self.inference_reference_column is None:
+            odds_ratio = 'NA'
+        else:
+            # Calcula a relação KGB odds / Inf. GB odds
+            kgb_goods = self.data.loc[self.data[self.inference_reference_column] == 'kgb'][self.target_column].value_counts().get(0, 0)
+            kbg_bads = self.data.loc[self.data[self.inference_reference_column] == 'kgb'][self.target_column].value_counts().get(1, 0)
 
-        infer_goods = self.data.loc[self.data[self.inference_reference_column] == 'infer'][self.target_column].value_counts().get(0, 0)
-        infer_bads = self.data.loc[self.data[self.inference_reference_column] == 'infer'][self.target_column].value_counts().get(1, 0)
+            infer_goods = self.data.loc[self.data[self.inference_reference_column] == 'infer'][self.target_column].value_counts().get(0, 0)
+            infer_bads = self.data.loc[self.data[self.inference_reference_column] == 'infer'][self.target_column].value_counts().get(1, 0)
 
-        odds_ratio = (kgb_goods/kbg_bads) / (infer_goods/infer_bads)
+            odds_ratio = (kgb_goods/kbg_bads) / (infer_goods/infer_bads)
 
         # Summary
         result = {
